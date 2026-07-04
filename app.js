@@ -728,8 +728,6 @@ function selectSongFromSidDialog(item) {
   const build = state.builds[index];
   const label = `${normalized.artist ? normalized.artist + " - " : ""}${normalized.title}`;
 
-  build.smingTitle = label;
-  build.songQuery = label;
   build.youtubeLink = "";
   build.sid = [{
     melon: normalized.melon || "",
@@ -954,8 +952,6 @@ $("#saveSidBtn").addEventListener("click", e => {
     genie: $("#genieSid").value.trim(),
     bugs: $("#bugsSid").value.trim()
   }];
-  build.smingTitle = label || build.smingTitle || "";
-  build.songQuery = label || build.songQuery;
   build.youtubeLink = "";
   saveState();
   $("#sidDialog").classList.remove("sid-dialog-open");
