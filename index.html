@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>총공빌더 by. 픎갤</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <main id="app">
+    <section class="card setup-card">
+      <h1>총공빌더 <span>by. 픎갤</span></h1>
+      <div class="divider"></div>
+
+      <label class="field">
+        <span>간격 설정</span>
+        <div class="term-line">
+          <input id="termInput" type="number" min="1" value="10" inputmode="numeric" />
+          <b>분 간격</b>
+        </div>
+      </label>
+
+      <label class="field">
+        <span>기본 총공제목</span>
+        <input id="defaultTitleInput" type="text" placeholder="기본으로 들어갈 총공제목" />
+      </label>
+
+      <button id="addBuildBtn" class="primary-btn">총공 추가</button>
+    </section>
+
+    <section id="buildList" class="build-list"></section>
+
+    <section class="bottom-actions">
+      <button id="copyBtn" class="primary-btn copy-wide">복사</button>
+      <button id="previewBtn" class="secondary-btn">미리보기</button>
+      <button id="imageBtn" class="secondary-btn">To Image</button>
+      <button id="saveBtn" class="secondary-btn">임시저장</button>
+      <button id="loadBtn" class="secondary-btn">불러오기</button>
+    </section>
+
+    <section id="previewPanel" class="preview-panel hidden">
+      <div class="preview-head">
+        <h2>출력 미리보기</h2>
+        <button id="closePreviewBtn">닫기</button>
+      </div>
+      <textarea id="previewText" readonly></textarea>
+    </section>
+
+    <div id="toast" class="toast hidden"></div>
+  </main>
+
+  <template id="buildCardTemplate">
+    <article class="card build-card">
+      <div class="build-head">
+        <div class="time-editor">
+          <div class="time-unit">
+            <button class="hour-up" type="button"><span class="mini-chev mini-up"></span></button>
+            <input class="hour-input" type="text" inputmode="numeric" maxlength="2" placeholder="22" />
+            <button class="hour-down" type="button"><span class="mini-chev mini-down"></span></button>
+          </div>
+          <span class="colon">:</span>
+          <div class="time-unit">
+            <button class="minute-up" type="button"><span class="mini-chev mini-up"></span></button>
+            <input class="minute-input" type="text" inputmode="numeric" maxlength="2" placeholder="00" />
+            <button class="minute-down" type="button"><span class="mini-chev mini-down"></span></button>
+          </div>
+        </div>
+        <div class="card-controls">
+          <button class="move-up-btn" type="button" aria-label="위로"><span class="chev chev-up"></span></button>
+          <button class="move-down-btn" type="button" aria-label="아래로"><span class="chev chev-down"></span></button>
+          <button class="delete-btn" type="button" aria-label="삭제">✕</button>
+        </div>
+      </div>
+
+      <div class="field search-field">
+        <div class="field-head">
+          <span>갤러리</span>
+          <button class="gallery-check-btn hidden" type="button">갤러리 확인</button>
+        </div>
+        <input class="gallery-search" type="search" placeholder="갤러리 검색 또는 주소 입력" autocomplete="off" />
+        <div class="selected-line gallery-selected"></div>
+        <div class="suggestions gallery-suggestions hidden"></div>
+      </div>
+
+      <label class="field">
+        <span>총공제목</span>
+        <input class="title-input" type="text" placeholder="총공제목" />
+      </label>
+
+      <div class="field">
+        <span>스밍</span>
+        <div class="song-line">
+          <input class="sming-input" type="text" placeholder="스밍" autocomplete="off" />
+          <button class="sid-open-btn" type="button">SID</button>
+          <button class="youtube-open-btn" type="button"><span class="yt-logo"><span></span></span></button>
+        </div>
+        <div class="selected-line song-selected"></div>
+      </div>
+    </article>
+  </template>
+
+  <div id="imageExportArea" class="image-export-area" aria-hidden="true"></div>
+
+  <dialog id="sidDialog">
+    <form method="dialog" class="dialog-card">
+      <h2>SID 추가</h2>
+
+      <label class="field search-field">
+        <span>노래제목 or 아티스트명</span>
+        <input id="sidSongSearch" type="search" placeholder="곡명 또는 아티스트명 입력" autocomplete="off" />
+        <div id="sidSongSuggestions" class="suggestions hidden"></div>
+      </label>
+
+      <input id="sidSongTitle" type="hidden" />
+
+      <div class="sid-row">
+        <b>M</b>
+        <input id="melonSid" type="text" inputmode="numeric" placeholder="MELON SID" />
+        <button id="melonCheck" type="button" class="check-btn">Check</button>
+      </div>
+
+      <div class="sid-row">
+        <b>G</b>
+        <input id="genieSid" type="text" inputmode="numeric" placeholder="GENIE SID" />
+        <button id="genieCheck" type="button" class="check-btn">Check</button>
+      </div>
+
+      <div class="sid-row">
+        <b>B</b>
+        <input id="bugsSid" type="text" inputmode="numeric" placeholder="BUGS SID" />
+        <button id="bugsCheck" type="button" class="check-btn">Check</button>
+      </div>
+
+
+      <div class="dialog-actions">
+        <button id="saveSidBtn" value="default" class="primary-btn">Save</button>
+        <button id="cancelSidBtn" value="cancel" class="cancel-btn">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="youtubeDialog">
+    <form method="dialog" class="dialog-card">
+      <h2>유튜브 링크</h2>
+      <label class="field">
+        <span>youtube 링크</span>
+        <input id="youtubeLinkInput" type="url" placeholder="https://youtu.be/" />
+      </label>
+      <p class="dialog-help">https://youtu.be/ 형식만 사용할 수 있습니다.</p>
+      <div class="dialog-actions">
+        <button id="saveYoutubeBtn" value="default" class="primary-btn">Save</button>
+        <button id="cancelYoutubeBtn" value="cancel" class="cancel-btn">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="./data.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
