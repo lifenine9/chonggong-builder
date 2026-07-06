@@ -1,8 +1,9 @@
-// Vercel Serverless Function
-// /api/song-search?q=검색어
-//
-// 멜론 자동완성 JSONP API만 사용합니다.
-// 빠르고 안정적이지만 SONGCONTENTS는 멜론 측에서 10개만 반환합니다.
+import { Redis } from "@upstash/redis";
+
+const redis = new Redis({
+  url: process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL,
+  token: process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN
+});
 
 function parseJsonp(text) {
   const start = text.indexOf("(");
@@ -26,27 +27,22 @@ async function searchMelonKeyword(q) {
   const callback = "jsonp_callback_" + Date.now();
   const url =
     "https://www.melon.com/search/keyword/index.json" +
-    "?jscallback=" +
-    encodeURIComponent(callback) +
-    "&query=" +
-    encodeURIComponent(q) +
-    "&_=" +
-    Date.now();
+    "?jscallback=" + encodeURIComponent(callback) +
+    "&query=" + encodeURIComponent(q) +
+    "&_=" + Date.now();
 
   const response = await fetch(url, {
     headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
+      "User-Agent": "Mozilla/5.0",
       "Accept": "*/*",
-      "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.7,en;q=0.6",
+      "Accept-Language": "ko-KR,ko;q=0.9",
       "Referer": "https://www.melon.com/"
     }
   });
 
-  if (!response.ok) throw new Error(`Melon keyword API error: ${response.status}`);
+  if (!response.ok) throw new Error(`Melon error: ${response.status}`);
 
-  const text = await response.text();
-  const data = parseJsonp(text);
+  const data = parseJsonp(await response.text());
   const songs = Array.isArray(data.SONGCONTENTS) ? data.SONGCONTENTS : [];
 
   return songs.map(song => ({
@@ -60,25 +56,23 @@ async function searchMelonKeyword(q) {
 }
 
 export default async function handler(req, res) {
-  res.setHeader("Cache-Control", "s-maxage=120, stale-while-revalidate=1200");
-
-  if (req.method !== "GET") {
-    res.status(405).send("Method Not Allowed");
-    return;
-  }
+  res.setHeader("Cache-Control", "s-maxage=60, stale-while-revalidate=600");
 
   const q = String(req.query.q || "").trim();
+  if (!q) return res.status(200).json([]);
 
-  if (!q) {
-    res.status(200).json([]);
-    return;
-  }
+  const key = `search:melon:${q.toLowerCase()}`;
 
   try {
+    const cached = await redis.get(key);
+    if (cached) return res.status(200).json(cached);
+
     const results = await searchMelonKeyword(q);
-    res.status(200).json(results);
+    await redis.set(key, results, { ex: 60 * 60 * 24 });
+
+    return res.status(200).json(results);
   } catch (error) {
     console.error(error);
-    res.status(500).send("멜론 곡 검색에 실패했습니다.");
+    return res.status(500).send("멜론 곡 검색 실패");
   }
 }

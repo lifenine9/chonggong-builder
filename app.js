@@ -720,7 +720,7 @@ function openYoutubeDialog(index) {
   $("#youtubeDialog").showModal();
 }
 
-function selectSongFromSidDialog(item) {
+async function selectSongFromSidDialog(item) {
   const index = state.editingSidIndex;
   if (index == null || !state.builds[index]) return;
 
@@ -731,20 +731,50 @@ function selectSongFromSidDialog(item) {
   build.youtubeLink = "";
   build.sid = [{
     melon: normalized.melon || "",
-    genie: "",
-    bugs: ""
+    genie: "0",
+    bugs: "0"
   }];
 
   $("#sidSongTitle").value = label;
   $("#sidSongSearch").value = label;
   $("#melonSid").value = normalized.melon || "";
-  $("#genieSid").value = "";
-  $("#bugsSid").value = "";
+  $("#genieSid").value = "0";
+  $("#bugsSid").value = "0";
   $("#sidSongSuggestions").classList.add("hidden");
   $("#sidSongSuggestions").innerHTML = "";
 
   saveState();
-  showToast("멜론 SID를 입력했습니다.");
+  showToast("멜론 SID 입력 완료. 지니/벅스 확인 중...");
+
+  try {
+    const params = new URLSearchParams({
+      melon: normalized.melon || "",
+      title: normalized.title || "",
+      artist: normalized.artist || ""
+    });
+
+    const response = await fetch(`/api/song-resolve?${params.toString()}`);
+    const data = response.ok ? await response.json() : null;
+
+    if (data && state.builds[index]) {
+      const sid = {
+        melon: data.melon || normalized.melon || "",
+        genie: data.genie || "0",
+        bugs: data.bugs || "0"
+      };
+
+      state.builds[index].sid = [sid];
+      $("#melonSid").value = sid.melon;
+      $("#genieSid").value = sid.genie;
+      $("#bugsSid").value = sid.bugs;
+
+      saveState();
+      showToast("SID 확인 완료");
+    }
+  } catch (error) {
+    console.warn(error);
+    showToast("지니/벅스는 0으로 저장했습니다.");
+  }
 }
 
 
