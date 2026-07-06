@@ -760,11 +760,11 @@ function addBuild() {
   saveState();
   render();
 
-  setTimeout(() => {
-    const cards = $$(".build-card");
-    cards.at(-1)?.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, 30);
-}
+//   setTimeout(() => {
+//     const cards = $$(".build-card");
+//     cards.at(-1)?.scrollIntoView({ behavior: "smooth", block: "center" });
+//   }, 30);
+// }
 
 async function copyOutput() {
   const text = getOutputText();
@@ -949,8 +949,8 @@ $("#saveSidBtn").addEventListener("click", e => {
 
   build.sid = [{
     melon: $("#melonSid").value.trim(),
-    genie: $("#genieSid").value.trim(),
-    bugs: $("#bugsSid").value.trim()
+    genie: $("#genieSid").value.trim() || "0",
+    bugs: $("#bugsSid").value.trim() || "0"
   }];
   build.youtubeLink = "";
   saveState();
