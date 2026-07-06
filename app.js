@@ -499,7 +499,7 @@ function render() {
 
     titleInput.value = build.title || "";
     smingInput.value = build.youtubeLink ? "" : (build.smingTitle || "");
-    smingInput.placeholder = build.youtubeLink ? "유튜브 링크 사용 중" : "미정";
+    smingInput.placeholder = build.youtubeLink ? "유튜브 링크 사용 중" : "스밍";
     smingInput.disabled = Boolean(build.youtubeLink);
     smingInput.classList.toggle("has-youtube", Boolean(build.youtubeLink));
     songSelected.textContent = build.youtubeLink
