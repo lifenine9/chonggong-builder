@@ -764,7 +764,7 @@ function addBuild() {
 //     const cards = $$(".build-card");
 //     cards.at(-1)?.scrollIntoView({ behavior: "smooth", block: "center" });
 //   }, 30);
-// }
+}
 
 async function copyOutput() {
   const text = getOutputText();
