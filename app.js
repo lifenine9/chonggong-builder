@@ -311,6 +311,17 @@ async function dcSearchProvider(keyword, signal) {
 }
 
 const songSearchCache = new Map();
+const SONG_SEARCH_CACHE_LIMIT = 50;
+
+function setSongSearchCache(key, value) {
+  if (songSearchCache.has(key)) songSearchCache.delete(key);
+  songSearchCache.set(key, value);
+
+  while (songSearchCache.size > SONG_SEARCH_CACHE_LIMIT) {
+    const oldestKey = songSearchCache.keys().next().value;
+    songSearchCache.delete(oldestKey);
+  }
+}
 
 let gallerySearchTimer = null;
 let gallerySearchController = null;
@@ -338,7 +349,7 @@ async function fetchLiveSongSearch(keyword, signal) {
 
   const data = await response.json();
   const list = Array.isArray(data) ? data.filter(Boolean).slice(0, 10) : [];
-  songSearchCache.set(cacheKey, list);
+  setSongSearchCache(cacheKey, list);
   return list;
 }
 
@@ -392,13 +403,30 @@ function openCheck(platform) {
     naver: "#naverSid",
     youtube: "#youtubeSid"
   };
-  const sid = $(map[platform]).value;
-  const url = getCheckUrl(platform, sid);
-  if (!url) {
-    showToast("SID를 입력해주세요.");
-    return;
+
+  const input = $(map[platform]);
+  const sid = input ? input.value.trim() : "";
+
+  if (sid && sid !== "0") {
+    const url = getCheckUrl(platform, sid);
+    if (url) {
+      window.open(url, "_blank", "noopener,noreferrer");
+      return;
+    }
   }
-  window.open(url, "_blank", "noopener,noreferrer");
+
+  if (platform === "genie" || platform === "bugs") {
+    const query = ($("#sidSongTitle").value || $("#sidSongSearch").value || "").trim();
+    if (query) {
+      const url = platform === "genie"
+        ? `https://www.genie.co.kr/search/searchSong?query=${encodeURIComponent(query)}`
+        : `https://music.bugs.co.kr/search/track?q=${encodeURIComponent(query)}`;
+      window.open(url, "_blank", "noopener,noreferrer");
+      return;
+    }
+  }
+
+  showToast(platform === "melon" ? "멜론 SID를 입력해주세요." : "SID가 없어 검색할 곡명도 없습니다.");
 }
 
 function saveState() {

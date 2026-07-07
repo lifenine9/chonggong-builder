@@ -2,7 +2,6 @@ import { Redis } from "@upstash/redis";
 
 let redisClient = null;
 const SONG_CACHE_TTL_SECONDS = 60 * 60 * 24 * 90;
-const CACHE_VERSION = "v2";
 
 function getRedis() {
   const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
@@ -30,201 +29,153 @@ function stripTags(html = "") {
     .trim();
 }
 
-function cleanSongTitle(value = "") {
+function norm(value = "") {
   return stripTags(value)
-    .replace(/\bTITLE\b/gi, "")
-    .replace(/\b19금\b/g, "")
-    .replace(/\bTITLE곡정보\s*보기\b/gi, "")
-    .replace(/곡정보\s*보기/gi, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function norm(v = "") {
-  return stripTags(v)
     .toLowerCase()
     .replace(/\s+/g, "")
     .replace(/[^\p{L}\p{N}]/gu, "");
 }
 
-function score(item, title, artist) {
-  const t = norm(title);
-  const a = norm(artist);
-  const ct = norm(item.title);
-  const ca = norm(item.artist);
+function scoreCandidate(item, title, artist) {
+  const targetTitle = norm(title);
+  const targetArtist = norm(artist);
+  const candidateTitle = norm(item.title);
+  const candidateArtist = norm(item.artist);
+  const rawText = norm(item.raw || "");
 
-  let s = 0;
+  let score = 0;
 
-  if (ct && t) {
-    if (ct === t) s += 120;
-    else if (ct.includes(t) || t.includes(ct)) s += 70;
+  if (candidateTitle && candidateTitle === targetTitle) score += 110;
+  else if (candidateTitle && (candidateTitle.includes(targetTitle) || targetTitle.includes(candidateTitle))) score += 70;
+  else if (targetTitle && rawText.includes(targetTitle)) score += 55;
+
+  if (targetArtist) {
+    if (candidateArtist && candidateArtist === targetArtist) score += 70;
+    else if (candidateArtist && (candidateArtist.includes(targetArtist) || targetArtist.includes(candidateArtist))) score += 40;
+    else if (rawText.includes(targetArtist)) score += 30;
   }
 
-  if (a && ca) {
-    if (ca === a) s += 70;
-    else if (ca.includes(a) || a.includes(ca)) s += 35;
-  }
-
-  return s;
+  return score;
 }
 
 async function fetchText(url, referer) {
-  const res = await fetch(url, {
+  const response = await fetch(url, {
     headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
       "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.7,en;q=0.6",
       "Referer": referer
     }
   });
 
-  if (!res.ok) throw new Error(`${url} ${res.status}`);
-  return await res.text();
+  if (!response.ok) throw new Error(`${url} ${response.status}`);
+  return await response.text();
 }
 
-function uniqById(items) {
+function uniqueById(items) {
   const seen = new Set();
   const out = [];
-
   for (const item of items) {
     if (!item.id || seen.has(item.id)) continue;
     seen.add(item.id);
     out.push(item);
   }
-
   return out;
 }
 
 function extractGenieCandidates(html) {
-  const hits = [];
-  const regexes = [
+  const candidates = [];
+  const patterns = [
     /songInfo\?xgnm=(\d{3,})/g,
     /detail\/songInfo\?xgnm=(\d{3,})/g,
-    /fnViewSongInfo\(['"]?(\d{3,})['"]?\)/g,
-    /fnPlaySong\(['"]?(\d{3,})['"]?\)/g,
-    /addSong\(['"]?(\d{3,})['"]?\)/g,
-    /data-songid=["']?(\d{3,})["']?/gi,
-    /songid=["']?(\d{3,})["']?/gi
+    /fnPlaySong\(['"]?(\d{3,})['"]?/g,
+    /fnViewSongInfo\(['"]?(\d{3,})['"]?/g,
+    /data-song-id=["']?(\d{3,})["']?/g,
+    /xgnm[=:]["']?(\d{3,})["']?/g
   ];
 
-  for (const regex of regexes) {
+  for (const regex of patterns) {
     for (const match of html.matchAll(regex)) {
-      hits.push({ id: match[1], index: match.index || 0 });
+      const index = match.index || 0;
+      const block = html.slice(Math.max(0, index - 3500), Math.min(html.length, index + 4500));
+
+      const titleMatch =
+        block.match(/class=["'][^"']*title[^"']*["'][^>]*>[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i) ||
+        block.match(/class=["'][^"']*title[^"']*["'][^>]*>\s*([\s\S]*?)\s*<\//i) ||
+        block.match(/title=["']([^"']+)["']/i);
+
+      const artistMatch =
+        block.match(/class=["'][^"']*artist[^"']*["'][^>]*>[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i) ||
+        block.match(/class=["'][^"']*artist[^"']*["'][^>]*>\s*([\s\S]*?)\s*<\//i) ||
+        block.match(/artistInfo[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i);
+
+      candidates.push({
+        id: match[1],
+        title: stripTags(titleMatch?.[1] || ""),
+        artist: stripTags(artistMatch?.[1] || ""),
+        raw: block
+      });
     }
   }
 
-  const results = [];
-
-  for (const hit of hits) {
-    const block = html.slice(Math.max(0, hit.index - 3500), Math.min(html.length, hit.index + 4500));
-
-    const titlePatterns = [
-      new RegExp(`<a[^>]+(?:songInfo\\?xgnm=${hit.id}|fnViewSongInfo\\(['\"]?${hit.id})[\\s\\S]*?>([\\s\\S]*?)<\\/a>`, "i"),
-      /class=["']title[^"']*["'][^>]*>\s*([\s\S]*?)<\/a>/i,
-      /class=["']title[^"']*["'][^>]*>\s*([\s\S]*?)(?:<\/td>|<\/div>|<\/p>)/i,
-      /title=["']([^"']+)["']/i
-    ];
-
-    const artistPatterns = [
-      /class=["']artist[^"']*["'][^>]*>\s*([\s\S]*?)<\/a>/i,
-      /class=["']artist[^"']*["'][^>]*>\s*([\s\S]*?)(?:<\/td>|<\/div>|<\/p>)/i,
-      /artistInfo[^>]*>\s*([\s\S]*?)<\/a>/i
-    ];
-
-    let title = "";
-    let artist = "";
-
-    for (const pattern of titlePatterns) {
-      const match = block.match(pattern);
-      if (match?.[1]) {
-        title = cleanSongTitle(match[1]);
-        if (title) break;
-      }
-    }
-
-    for (const pattern of artistPatterns) {
-      const match = block.match(pattern);
-      if (match?.[1]) {
-        artist = stripTags(match[1]);
-        if (artist) break;
-      }
-    }
-
-    results.push({ id: hit.id, title, artist });
-  }
-
-  return uniqById(results);
+  return uniqueById(candidates);
 }
 
 async function findGenie(title, artist) {
-  const queries = [
-    `${title} ${artist || ""}`.trim(),
-    title
-  ].filter(Boolean);
+  const q = `${title} ${artist || ""}`.trim();
+  const html = await fetchText(
+    "https://www.genie.co.kr/search/searchSong?query=" + encodeURIComponent(q),
+    "https://www.genie.co.kr/"
+  );
 
-  for (const q of [...new Set(queries)]) {
-    const html = await fetchText(
-      "https://www.genie.co.kr/search/searchSong?query=" + encodeURIComponent(q),
-      "https://www.genie.co.kr/"
-    );
+  const candidates = extractGenieCandidates(html);
+  if (!candidates.length) return "0";
 
-    const candidates = extractGenieCandidates(html);
-    const best = candidates
-      .map(item => ({ ...item, score: score(item, title, artist) }))
-      .sort((a, b) => b.score - a.score)[0];
+  const ranked = candidates
+    .map(item => ({ ...item, score: scoreCandidate(item, title, artist) }))
+    .sort((a, b) => b.score - a.score);
 
-    if (best && best.score >= 70) {
-      return best.id;
-    }
+  const best = ranked[0];
 
-    const titleOnlyBest = candidates
-      .map(item => ({ ...item, score: score(item, title, "") }))
-      .sort((a, b) => b.score - a.score)[0];
+  if (best && best.score >= 60) return best.id;
 
-    if (titleOnlyBest && titleOnlyBest.score >= 100) {
-      return titleOnlyBest.id;
-    }
-  }
+  // 지니 HTML에서 제목/가수 텍스트를 못 뽑는 경우가 있어, 후보가 하나뿐이면 그 값을 사용한다.
+  if (ranked.length === 1) return ranked[0].id;
 
   return "0";
 }
 
 function extractBugsCandidates(html) {
-  const hits = [];
-  const regexes = [
+  const candidates = [];
+  const patterns = [
     /\/track\/(\d{3,})/g,
-    /trackId[=:"]["']?(\d{3,})/g,
-    /track_id[=:"]["']?(\d{3,})/gi
+    /trackId[=:]["']?(\d{3,})["']?/g,
+    /data-track-id=["']?(\d{3,})["']?/g
   ];
 
-  for (const regex of regexes) {
+  for (const regex of patterns) {
     for (const match of html.matchAll(regex)) {
-      hits.push({ id: match[1], index: match.index || 0 });
+      const index = match.index || 0;
+      const block = html.slice(Math.max(0, index - 3000), Math.min(html.length, index + 4500));
+
+      const titleMatch =
+        block.match(/class=["']title["'][\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i) ||
+        block.match(/title=["']([^"']+)["']/i);
+
+      const artistMatch =
+        block.match(/class=["']artist["'][\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i) ||
+        block.match(/artist[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i);
+
+      candidates.push({
+        id: match[1],
+        title: stripTags(titleMatch?.[1] || ""),
+        artist: stripTags(artistMatch?.[1] || ""),
+        raw: block
+      });
     }
   }
 
-  const results = [];
-
-  for (const hit of hits) {
-    const block = html.slice(Math.max(0, hit.index - 3000), Math.min(html.length, hit.index + 4000));
-
-    const titleMatch =
-      block.match(/class=["']title["'][\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i) ||
-      block.match(/title=["']([^"']+)["']/i);
-
-    const artistMatch =
-      block.match(/class=["']artist["'][\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i) ||
-      block.match(/artist[^>]*>\s*([^<]+)</i);
-
-    results.push({
-      id: hit.id,
-      title: cleanSongTitle(titleMatch?.[1] || ""),
-      artist: stripTags(artistMatch?.[1] || "")
-    });
-  }
-
-  return uniqById(results);
+  return uniqueById(candidates);
 }
 
 async function findBugs(title, artist) {
@@ -235,11 +186,16 @@ async function findBugs(title, artist) {
   );
 
   const candidates = extractBugsCandidates(html);
-  const best = candidates
-    .map(item => ({ ...item, score: score(item, title, artist) }))
-    .sort((a, b) => b.score - a.score)[0];
+  if (!candidates.length) return "0";
 
-  return best && best.score >= 60 ? best.id : "0";
+  const ranked = candidates
+    .map(item => ({ ...item, score: scoreCandidate(item, title, artist) }))
+    .sort((a, b) => b.score - a.score);
+
+  const best = ranked[0];
+  if (best && best.score >= 60) return best.id;
+  if (ranked.length === 1) return ranked[0].id;
+  return "0";
 }
 
 export default async function handler(req, res) {
@@ -256,7 +212,7 @@ export default async function handler(req, res) {
   }
 
   const redis = getRedis();
-  const cacheKey = `song:${CACHE_VERSION}:melon:${melon}`;
+  const cacheKey = `song:v2:melon:${melon}`;
 
   try {
     if (redis) {
