@@ -530,9 +530,13 @@ function render() {
     smingInput.placeholder = build.youtubeLink ? "유튜브 링크 사용 중" : "스밍";
     smingInput.disabled = Boolean(build.youtubeLink);
     smingInput.classList.toggle("has-youtube", Boolean(build.youtubeLink));
+    const sidLabel = build.sid.length
+      ? `${build.songQuery || build.smingTitle || "곡제목"}: ${build.sid.map(sidToText).filter(Boolean).join(" / ")}`
+      : "";
+
     songSelected.textContent = build.youtubeLink
       ? `유튜브 링크 사용 중: ${build.youtubeLink}`
-      : (build.sid.length ? `SID: ${build.sid.map(sidToText).filter(Boolean).join(" / ")}` : "");
+      : sidLabel;
 
     $(".hour-up", node).addEventListener("click", () => {
       changeTimePart(build, "hour", 1);
@@ -756,6 +760,8 @@ async function selectSongFromSidDialog(item) {
   const build = state.builds[index];
   const label = `${normalized.artist ? normalized.artist + " - " : ""}${normalized.title}`;
 
+  build.songQuery = label;
+  build.sidTitle = label;
   build.youtubeLink = "";
   build.sid = [{
     melon: normalized.melon || "",
