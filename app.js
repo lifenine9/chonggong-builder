@@ -720,7 +720,7 @@ function openYoutubeDialog(index) {
   $("#youtubeDialog").showModal();
 }
 
-async function selectSongFromSidDialog(item) {
+async async function selectSongFromSidDialog(item) {
   const index = state.editingSidIndex;
   if (index == null || !state.builds[index]) return;
 
@@ -753,7 +753,9 @@ async function selectSongFromSidDialog(item) {
       artist: normalized.artist || ""
     });
 
-    const response = await fetch(`/api/song-resolve?${params.toString()}`);
+    const response = await fetch(`/api/song-resolve?${params.toString()}`, {
+      cache: "no-store"
+    });
     const data = response.ok ? await response.json() : null;
 
     if (data && state.builds[index]) {
@@ -777,7 +779,6 @@ async function selectSongFromSidDialog(item) {
   }
 }
 
-
 function addBuild() {
   const term = Number(state.default.term) || 10;
   const nextTime = state.builds.length
@@ -786,14 +787,8 @@ function addBuild() {
 
   const newBuild = createBuild(nextTime, state.default.title);
   state.builds.push(newBuild);
-  state.animateNextCardId = newBuild.id;
   saveState();
   render();
-
-//   setTimeout(() => {
-//     const cards = $$(".build-card");
-//     cards.at(-1)?.scrollIntoView({ behavior: "smooth", block: "center" });
-//   }, 30);
 }
 
 async function copyOutput() {
