@@ -720,7 +720,7 @@ function openYoutubeDialog(index) {
   $("#youtubeDialog").showModal();
 }
 
-async async function selectSongFromSidDialog(item) {
+async function selectSongFromSidDialog(item) {
   const index = state.editingSidIndex;
   if (index == null || !state.builds[index]) return;
 
