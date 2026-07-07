@@ -2215,3 +2215,22 @@ dialog[open] ~ .toast,
     font-size: 11px !important;
   }
 }
+
+
+/* SID resolve UX/refactor */
+.sid-row input.sid-pending {
+  border-color: #c7d2fe;
+  background: #f8faff;
+  color: #475569;
+}
+
+.sid-row input.sid-pending::placeholder {
+  color: #4f46e5;
+  opacity: 1;
+  font-weight: 850;
+}
+
+#saveSidBtn:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}

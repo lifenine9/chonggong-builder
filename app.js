@@ -396,7 +396,7 @@ function getCheckUrl(platform, sid) {
 }
 
 function openCheck(platform) {
-  const map = {
+  const sidMap = {
     melon: "#melonSid",
     genie: "#genieSid",
     bugs: "#bugsSid",
@@ -404,29 +404,83 @@ function openCheck(platform) {
     youtube: "#youtubeSid"
   };
 
-  const input = $(map[platform]);
-  const sid = input ? input.value.trim() : "";
+  const input = sidMap[platform] ? $(sidMap[platform]) : null;
+  const sid = input ? String(input.value || "").trim() : "";
+  const searchQuery = getSearchQueryFromSidDialog();
 
-  if (sid && sid !== "0") {
-    const url = getCheckUrl(platform, sid);
-    if (url) {
-      window.open(url, "_blank", "noopener,noreferrer");
+  let url = "";
+
+  if (platform === "melon") {
+    if (!sid || sid === "0") {
+      showToast("멜론 SID를 먼저 선택해주세요.");
       return;
     }
+    url = getCheckUrl("melon", sid);
   }
 
-  if (platform === "genie" || platform === "bugs") {
-    const query = ($("#sidSongTitle").value || $("#sidSongSearch").value || "").trim();
-    if (query) {
-      const url = platform === "genie"
-        ? `https://www.genie.co.kr/search/searchSong?query=${encodeURIComponent(query)}`
-        : `https://music.bugs.co.kr/search/track?q=${encodeURIComponent(query)}`;
-      window.open(url, "_blank", "noopener,noreferrer");
-      return;
-    }
+  if (platform === "genie") {
+    url = sid && sid !== "0"
+      ? getCheckUrl("genie", sid)
+      : (searchQuery ? `https://www.genie.co.kr/search/searchSong?query=${encodeURIComponent(searchQuery)}` : "");
   }
 
-  showToast(platform === "melon" ? "멜론 SID를 입력해주세요." : "SID가 없어 검색할 곡명도 없습니다.");
+  if (platform === "bugs") {
+    url = sid && sid !== "0"
+      ? getCheckUrl("bugs", sid)
+      : (searchQuery ? `https://music.bugs.co.kr/search/track?q=${encodeURIComponent(searchQuery)}` : "");
+  }
+
+  if (!url) {
+    showToast("확인할 SID 또는 곡명이 없습니다.");
+    return;
+  }
+
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
+
+function normalizeSidValue(value) {
+  const text = String(value || "").trim();
+  return text && text !== "0" ? text : "0";
+}
+
+function getSidLabel(build) {
+  return build.sidTitle || build.songQuery || build.smingTitle || "곡제목";
+}
+
+function setSidResolvePending(isPending) {
+  const genieInput = $("#genieSid");
+  const bugsInput = $("#bugsSid");
+  const saveBtn = $("#saveSidBtn");
+
+  if (!genieInput || !bugsInput || !saveBtn) return;
+
+  if (isPending) {
+    genieInput.value = "";
+    bugsInput.value = "";
+    genieInput.placeholder = "확인 중...";
+    bugsInput.placeholder = "확인 중...";
+    genieInput.classList.add("sid-pending");
+    bugsInput.classList.add("sid-pending");
+    saveBtn.disabled = true;
+  } else {
+    genieInput.placeholder = "GENIE SID";
+    bugsInput.placeholder = "BUGS SID";
+    genieInput.classList.remove("sid-pending");
+    bugsInput.classList.remove("sid-pending");
+    saveBtn.disabled = false;
+  }
+}
+
+function setSidDialogValues({ melon = "", genie = "", bugs = "" } = {}) {
+  $("#melonSid").value = melon || "";
+  $("#genieSid").value = genie || "";
+  $("#bugsSid").value = bugs || "";
+}
+
+function getSearchQueryFromSidDialog() {
+  const title = ($("#sidSongTitle").value || $("#sidSongSearch").value || "").trim();
+  return title.replace(/^(.+?)\s*-\s*/, "$1 ");
 }
 
 function saveState() {
@@ -531,7 +585,7 @@ function render() {
     smingInput.disabled = Boolean(build.youtubeLink);
     smingInput.classList.toggle("has-youtube", Boolean(build.youtubeLink));
     const sidLabel = build.sid.length
-      ? `${build.songQuery || build.smingTitle || "곡제목"}: ${build.sid.map(sidToText).filter(Boolean).join(" / ")}`
+      ? `${getSidLabel(build)}: ${build.sid.map(sidToText).filter(Boolean).join(" / ")}`
       : "";
 
     songSelected.textContent = build.youtubeLink
@@ -715,13 +769,20 @@ function openSidDialog(index) {
   state.editingSidIndex = index;
   const build = state.builds[index];
   const first = build.sid[0] || {};
-  $("#sidSongSearch").value = build.smingTitle || build.songQuery || "";
+  const label = build.sidTitle || build.songQuery || "";
+
+  $("#sidSongSearch").value = label;
   $("#sidSongSuggestions").classList.add("hidden");
   $("#sidSongSuggestions").innerHTML = "";
-  $("#sidSongTitle").value = build.smingTitle || build.songQuery || "";
-  $("#melonSid").value = first.melon || "";
-  $("#genieSid").value = first.genie || "";
-  $("#bugsSid").value = first.bugs || "";
+  $("#sidSongTitle").value = label;
+
+  setSidResolvePending(false);
+  setSidDialogValues({
+    melon: first.melon || "",
+    genie: first.genie || "",
+    bugs: first.bugs || ""
+  });
+
   $("#sidDialog").classList.add("sid-dialog-open");
   $("#sidDialog").showModal();
 }
@@ -759,25 +820,21 @@ async function selectSongFromSidDialog(item) {
   const normalized = normalizeSongItem(item);
   const build = state.builds[index];
   const label = `${normalized.artist ? normalized.artist + " - " : ""}${normalized.title}`;
+  const melon = normalized.melon || "";
 
   build.songQuery = label;
   build.sidTitle = label;
   build.youtubeLink = "";
   build.sid = [{
-    melon: normalized.melon || "",
+    melon,
     genie: "0",
     bugs: "0"
   }];
 
   $("#sidSongTitle").value = label;
   $("#sidSongSearch").value = label;
-  $("#melonSid").value = normalized.melon || "";
-  $("#genieSid").value = "";
-  $("#bugsSid").value = "";
-
-  $("#genieSid").placeholder = "확인 중...";
-  $("#bugsSid").placeholder = "확인 중...";
-  $("#saveSidBtn").disabled = true;
+  $("#melonSid").value = melon;
+  setSidResolvePending(true);
 
   $("#sidSongSuggestions").classList.add("hidden");
   $("#sidSongSuggestions").innerHTML = "";
@@ -787,7 +844,7 @@ async function selectSongFromSidDialog(item) {
 
   try {
     const params = new URLSearchParams({
-      melon: normalized.melon || "",
+      melon,
       title: normalized.title || "",
       artist: normalized.artist || ""
     });
@@ -797,35 +854,41 @@ async function selectSongFromSidDialog(item) {
     });
 
     const data = response.ok ? await response.json() : null;
-
     const sid = {
-      melon: data?.melon || normalized.melon || "",
-      genie: data?.genie || "0",
-      bugs: data?.bugs || "0"
+      melon: data?.melon || melon,
+      genie: normalizeSidValue(data?.genie),
+      bugs: normalizeSidValue(data?.bugs)
     };
 
+    if (!state.builds[index]) return;
+
     state.builds[index].sid = [sid];
+    state.builds[index].songQuery = label;
+    state.builds[index].sidTitle = label;
 
-    $("#melonSid").value = sid.melon;
-    $("#genieSid").value = sid.genie;
-    $("#bugsSid").value = sid.bugs;
-
-    $("#genieSid").placeholder = "";
-    $("#bugsSid").placeholder = "";
-
+    setSidDialogValues(sid);
     saveState();
     showToast("SID 확인 완료");
   } catch (error) {
     console.warn(error);
 
-    $("#genieSid").value = "0";
-    $("#bugsSid").value = "0";
-    $("#genieSid").placeholder = "";
-    $("#bugsSid").placeholder = "";
+    const fallbackSid = {
+      melon,
+      genie: "0",
+      bugs: "0"
+    };
 
+    if (state.builds[index]) {
+      state.builds[index].sid = [fallbackSid];
+      state.builds[index].songQuery = label;
+      state.builds[index].sidTitle = label;
+      saveState();
+    }
+
+    setSidDialogValues(fallbackSid);
     showToast("지니/벅스는 0으로 저장했습니다.");
   } finally {
-    $("#saveSidBtn").disabled = false;
+    setSidResolvePending(false);
   }
 }
 
@@ -1022,10 +1085,15 @@ $("#saveSidBtn").addEventListener("click", e => {
   const build = state.builds[index];
   const label = $("#sidSongTitle").value.trim() || $("#sidSongSearch").value.trim();
 
+  if (label) {
+    build.songQuery = label;
+    build.sidTitle = label;
+  }
+
   build.sid = [{
     melon: $("#melonSid").value.trim(),
-    genie: $("#genieSid").value.trim() || "0",
-    bugs: $("#bugsSid").value.trim() || "0"
+    genie: normalizeSidValue($("#genieSid").value),
+    bugs: normalizeSidValue($("#bugsSid").value)
   }];
   build.youtubeLink = "";
   saveState();
@@ -1034,7 +1102,11 @@ $("#saveSidBtn").addEventListener("click", e => {
   render();
 });
 
-$("#cancelSidBtn").addEventListener("click", () => $("#sidDialog").close());
+$("#cancelSidBtn").addEventListener("click", () => {
+  setSidResolvePending(false);
+  $("#sidDialog").classList.remove("sid-dialog-open");
+  $("#sidDialog").close();
+});
 
 $("#youtubeLinkInput").addEventListener("input", e => {
   const hasValue = e.target.value.trim().length > 0;
