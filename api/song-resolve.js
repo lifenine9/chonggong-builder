@@ -1,9 +1,20 @@
 import { Redis } from "@upstash/redis";
 
-const redis = new Redis({
-  url: process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL,
-  token: process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN
-});
+let redisClient = null;
+const SONG_CACHE_TTL_SECONDS = 60 * 60 * 24 * 90;
+
+function getRedis() {
+  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+
+  if (!url || !token) return null;
+
+  if (!redisClient) {
+    redisClient = new Redis({ url, token });
+  }
+
+  return redisClient;
+}
 
 function stripTags(html = "") {
   return String(html)
@@ -100,17 +111,29 @@ async function findBugs(title, artist) {
 }
 
 export default async function handler(req, res) {
+  if (req.method !== "GET") {
+    return res.status(405).send("Method Not Allowed");
+  }
+
   const melon = String(req.query.melon || "").trim();
   const title = String(req.query.title || "").trim();
   const artist = String(req.query.artist || "").trim();
 
-  if (!melon || !title) return res.status(400).send("missing melon/title");
+  if (!melon || !title) {
+    return res.status(400).send("missing melon/title");
+  }
 
+  const redis = getRedis();
   const key = `song:melon:${melon}`;
 
   try {
-    const cached = await redis.get(key);
-    if (cached) return res.status(200).json(cached);
+    if (redis) {
+      const cached = await redis.get(key);
+      if (cached) {
+        res.setHeader("X-Cache", "HIT");
+        return res.status(200).json(cached);
+      }
+    }
 
     const [genie, bugs] = await Promise.allSettled([
       findGenie(title, artist),
@@ -125,7 +148,12 @@ export default async function handler(req, res) {
       bugs: bugs.status === "fulfilled" ? bugs.value : "0"
     };
 
-    await redis.set(key, result, { ex: 60 * 60 * 24 * 90 });
+    if (redis) {
+      await redis.set(key, result, { ex: SONG_CACHE_TTL_SECONDS });
+      res.setHeader("X-Cache", "MISS");
+    } else {
+      res.setHeader("X-Cache", "BYPASS");
+    }
 
     return res.status(200).json(result);
   } catch (error) {

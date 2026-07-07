@@ -937,7 +937,7 @@ $("#sidSongSearch").addEventListener("input", e => {
   }
 
   if (keyword.length < 2) {
-    box.innerHTML = `<div class="suggestion-note">2글자 이상 입력하면 검색합니다.<br><small>예) 하얀 / 프로미스나인</small></div>`;
+    box.innerHTML = `<div class="suggestion-note">2글자 이상 입력하면 검색합니다.</div>`;
     box.classList.remove("hidden");
     return;
   }
