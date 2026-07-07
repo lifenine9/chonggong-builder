@@ -766,13 +766,18 @@ async function selectSongFromSidDialog(item) {
   $("#sidSongTitle").value = label;
   $("#sidSongSearch").value = label;
   $("#melonSid").value = normalized.melon || "";
-  $("#genieSid").value = "0";
-  $("#bugsSid").value = "0";
+  $("#genieSid").value = "";
+  $("#bugsSid").value = "";
+
+  $("#genieSid").placeholder = "확인 중...";
+  $("#bugsSid").placeholder = "확인 중...";
+  $("#saveSidBtn").disabled = true;
+
   $("#sidSongSuggestions").classList.add("hidden");
   $("#sidSongSuggestions").innerHTML = "";
 
   saveState();
-  showToast("멜론 SID 입력 완료. 지니/벅스 확인 중...");
+  showToast("지니/벅스 SID 확인 중...");
 
   try {
     const params = new URLSearchParams({
@@ -784,26 +789,37 @@ async function selectSongFromSidDialog(item) {
     const response = await fetch(`/api/song-resolve?${params.toString()}`, {
       cache: "no-store"
     });
+
     const data = response.ok ? await response.json() : null;
 
-    if (data && state.builds[index]) {
-      const sid = {
-        melon: data.melon || normalized.melon || "",
-        genie: data.genie || "0",
-        bugs: data.bugs || "0"
-      };
+    const sid = {
+      melon: data?.melon || normalized.melon || "",
+      genie: data?.genie || "0",
+      bugs: data?.bugs || "0"
+    };
 
-      state.builds[index].sid = [sid];
-      $("#melonSid").value = sid.melon;
-      $("#genieSid").value = sid.genie;
-      $("#bugsSid").value = sid.bugs;
+    state.builds[index].sid = [sid];
 
-      saveState();
-      showToast("SID 확인 완료");
-    }
+    $("#melonSid").value = sid.melon;
+    $("#genieSid").value = sid.genie;
+    $("#bugsSid").value = sid.bugs;
+
+    $("#genieSid").placeholder = "";
+    $("#bugsSid").placeholder = "";
+
+    saveState();
+    showToast("SID 확인 완료");
   } catch (error) {
     console.warn(error);
+
+    $("#genieSid").value = "0";
+    $("#bugsSid").value = "0";
+    $("#genieSid").placeholder = "";
+    $("#bugsSid").placeholder = "";
+
     showToast("지니/벅스는 0으로 저장했습니다.");
+  } finally {
+    $("#saveSidBtn").disabled = false;
   }
 }
 
