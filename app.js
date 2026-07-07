@@ -478,6 +478,31 @@ function setSidDialogValues({ melon = "", genie = "", bugs = "" } = {}) {
   $("#bugsSid").value = bugs || "";
 }
 
+function setupSidTextareas() {
+  ["#melonSid", "#genieSid", "#bugsSid"].forEach(selector => {
+    const el = $(selector);
+    if (!el) return;
+
+    el.setAttribute("autocomplete", "off");
+    el.setAttribute("autocapitalize", "off");
+    el.setAttribute("spellcheck", "false");
+    el.setAttribute("rows", "1");
+    el.setAttribute("wrap", "off");
+
+    el.addEventListener("keydown", event => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        el.blur();
+      }
+    });
+
+    el.addEventListener("input", () => {
+      const next = el.value.replace(/[\r\n]+/g, "").trim();
+      if (el.value !== next) el.value = next;
+    });
+  });
+}
+
 function getSearchQueryFromSidDialog() {
   const title = ($("#sidSongTitle").value || $("#sidSongSearch").value || "").trim();
   return title.replace(/^(.+?)\s*-\s*/, "$1 ");
@@ -1140,6 +1165,8 @@ $("#saveYoutubeBtn").addEventListener("click", e => {
 });
 
 $("#cancelYoutubeBtn").addEventListener("click", () => $("#youtubeDialog").close());
+
+setupSidTextareas();
 
 if (!loadState()) {
   state.builds = [];
