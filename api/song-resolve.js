@@ -36,6 +36,14 @@ function norm(value = "") {
     .replace(/[^\p{L}\p{N}]/gu, "");
 }
 
+function removeParenText(value = "") {
+  return String(value)
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/\[[^\]]*\]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function isInstrumentalTitle(title = "") {
   const text = String(title).toLowerCase();
 
@@ -49,6 +57,70 @@ function isInstrumentalTitle(title = "") {
   );
 }
 
+function titleMatches(candidateTitle, targetTitle) {
+  const c = norm(candidateTitle);
+  const t = norm(targetTitle);
+  if (!c || !t) return false;
+  if (c === t) return true;
+
+  const cNoParen = norm(removeParenText(candidateTitle));
+  const tNoParen = norm(removeParenText(targetTitle));
+  return Boolean(cNoParen && tNoParen && cNoParen === tNoParen);
+}
+
+function artistMatches(candidateArtist, targetArtist) {
+  const c = norm(candidateArtist);
+  const t = norm(targetArtist);
+  if (!t) return true;
+  if (!c) return false;
+  return c === t || c.includes(t) || t.includes(c);
+}
+
+function rawContainsTitleArtist(raw, title, artist) {
+  const rawNorm = norm(raw);
+  const titleNorm = norm(title);
+  const artistNorm = norm(artist);
+  if (!rawNorm || !titleNorm) return false;
+  if (!rawNorm.includes(titleNorm)) return false;
+  return !artistNorm || rawNorm.includes(artistNorm);
+}
+
+function buildSearchQueries(title, artist) {
+  const cleanedTitle = removeParenText(title);
+  const queries = [
+    `${title} ${artist || ""}`.trim(),
+    `${artist || ""} ${title}`.trim(),
+    `${cleanedTitle} ${artist || ""}`.trim(),
+    `${artist || ""} ${cleanedTitle}`.trim(),
+    title,
+    cleanedTitle
+  ];
+  return [...new Set(queries.filter(Boolean))];
+}
+
+function pickGenieCandidateText(row, id) {
+  const escapedId = String(id).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+  const titlePatterns = [
+    new RegExp(`fnViewSongInfo\\(['\"]?${escapedId}['\"]?\\)[\\s\\S]*?<a[^>]*>([\\s\\S]*?)<\\/a>`, "i"),
+    new RegExp(`songInfo\\?xgnm=${escapedId}[^>]*>([\\s\\S]*?)<\\/a>`, "i"),
+    /class=["'][^"']*title[^"']*["'][^>]*>[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i,
+    /class=["'][^"']*title[^"']*["'][^>]*>\s*([\s\S]*?)\s*<\//i,
+    /title=["']([^"']+)["']/i
+  ];
+
+  const artistPatterns = [
+    /class=["'][^"']*artist[^"']*["'][^>]*>[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i,
+    /class=["'][^"']*artist[^"']*["'][^>]*>\s*([\s\S]*?)\s*<\//i,
+    /artistInfo[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i,
+    /fnViewArtist[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i
+  ];
+
+  const title = stripTags((titlePatterns.map(p => row.match(p)?.[1]).find(Boolean)) || "");
+  const artist = stripTags((artistPatterns.map(p => row.match(p)?.[1]).find(Boolean)) || "");
+  return { title, artist };
+}
+
 function scoreCandidate(item, title, artist) {
   const targetTitle = norm(title);
   const targetArtist = norm(artist);
@@ -58,16 +130,16 @@ function scoreCandidate(item, title, artist) {
 
   let score = 0;
 
-  if (candidateTitle && candidateTitle === targetTitle) score += 110;
-  else if (candidateTitle && (candidateTitle.includes(targetTitle) || targetTitle.includes(candidateTitle))) score += 70;
+  if (titleMatches(item.title, title)) score += 140;
+  else if (candidateTitle && targetTitle && (candidateTitle.includes(targetTitle) || targetTitle.includes(candidateTitle))) score += 70;
   else if (targetTitle && rawText.includes(targetTitle)) score += 55;
 
   if (targetArtist) {
-    if (candidateArtist && candidateArtist === targetArtist) score += 70;
-    else if (candidateArtist && (candidateArtist.includes(targetArtist) || targetArtist.includes(candidateArtist))) score += 40;
-    else if (rawText.includes(targetArtist)) score += 30;
+    if (artistMatches(item.artist, artist)) score += 80;
+    else if (rawText.includes(targetArtist)) score += 35;
   }
 
+  if (isInstrumentalTitle(item.title)) score -= 300;
   return score;
 }
 
@@ -98,97 +170,137 @@ function uniqueById(items) {
 
 function extractGenieCandidates(html) {
   const candidates = [];
-  const patterns = [
-    /songInfo\?xgnm=(\d{3,})/g,
-    /detail\/songInfo\?xgnm=(\d{3,})/g,
-    /fnPlaySong\(['"]?(\d{3,})['"]?/g,
-    /fnViewSongInfo\(['"]?(\d{3,})['"]?/g,
-    /data-song-id=["']?(\d{3,})["']?/g,
-    /xgnm[=:]["']?(\d{3,})["']?/g
+  const seen = new Set();
+
+  const rows = [
+    ...(html.match(/<tr[\s\S]*?<\/tr>/gi) || []),
+    ...(html.match(/<li[\s\S]*?<\/li>/gi) || [])
   ];
 
-  for (const regex of patterns) {
-    for (const match of html.matchAll(regex)) {
-      const index = match.index || 0;
-      const block = html.slice(Math.max(0, index - 3500), Math.min(html.length, index + 4500));
+  for (const row of rows) {
+    const idMatch =
+      row.match(/songInfo\?xgnm=(\d{3,})/i) ||
+      row.match(/detail\/songInfo\?xgnm=(\d{3,})/i) ||
+      row.match(/fnPlaySong\(['"]?(\d{3,})['"]?/i) ||
+      row.match(/fnViewSongInfo\(['"]?(\d{3,})['"]?/i) ||
+      row.match(/data-song-id=["']?(\d{3,})["']?/i) ||
+      row.match(/xgnm[=:]["']?(\d{3,})["']?/i);
 
-      const titleMatch =
-        block.match(/class=["'][^"']*title[^"']*["'][^>]*>[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i) ||
-        block.match(/class=["'][^"']*title[^"']*["'][^>]*>\s*([\s\S]*?)\s*<\//i) ||
-        block.match(/title=["']([^"']+)["']/i);
+    if (!idMatch) continue;
+    const id = idMatch[1];
+    if (seen.has(id)) continue;
 
-      const artistMatch =
-        block.match(/class=["'][^"']*artist[^"']*["'][^>]*>[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i) ||
-        block.match(/class=["'][^"']*artist[^"']*["'][^>]*>\s*([\s\S]*?)\s*<\//i) ||
-        block.match(/artistInfo[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i);
+    const picked = pickGenieCandidateText(row, id);
+    seen.add(id);
+    candidates.push({
+      id,
+      title: picked.title,
+      artist: picked.artist,
+      raw: row
+    });
+  }
 
-      candidates.push({
-        id: match[1],
-        title: stripTags(titleMatch?.[1] || ""),
-        artist: stripTags(artistMatch?.[1] || ""),
-        raw: block
-      });
+  // 지니 HTML이 row 단위로 안 잡히는 경우의 fallback.
+  if (!candidates.length) {
+    const patterns = [
+      /songInfo\?xgnm=(\d{3,})/g,
+      /detail\/songInfo\?xgnm=(\d{3,})/g,
+      /fnPlaySong\(['"]?(\d{3,})['"]?/g,
+      /fnViewSongInfo\(['"]?(\d{3,})['"]?/g,
+      /data-song-id=["']?(\d{3,})["']?/g,
+      /xgnm[=:]["']?(\d{3,})["']?/g
+    ];
+
+    for (const regex of patterns) {
+      for (const match of html.matchAll(regex)) {
+        const id = match[1];
+        if (seen.has(id)) continue;
+        const index = match.index || 0;
+        const block = html.slice(Math.max(0, index - 2500), Math.min(html.length, index + 3500));
+        const picked = pickGenieCandidateText(block, id);
+
+        seen.add(id);
+        candidates.push({
+          id,
+          title: picked.title,
+          artist: picked.artist,
+          raw: block
+        });
+      }
     }
   }
 
   return uniqueById(candidates);
 }
 
-async function findGenie(title, artist) {
-  const q = `${title} ${artist || ""}`.trim();
+async function searchGenieOnce(query, title, artist) {
   const html = await fetchText(
-    "https://www.genie.co.kr/search/searchSong?query=" + encodeURIComponent(q),
+    "https://www.genie.co.kr/search/searchSong?query=" + encodeURIComponent(query),
     "https://www.genie.co.kr/"
   );
 
-  const candidates = extractGenieCandidates(html);
-  if (!candidates.length) return "0";
-
-  const ranked = candidates
+  return extractGenieCandidates(html)
+    .filter(item => !isInstrumentalTitle(item.title))
     .map(item => ({ ...item, score: scoreCandidate(item, title, artist) }))
     .sort((a, b) => b.score - a.score);
+}
 
-  const best = ranked[0];
+async function findGenie(title, artist) {
+  for (const query of buildSearchQueries(title, artist)) {
+    const ranked = await searchGenieOnce(query, title, artist).catch(() => []);
 
-  if (best && best.score >= 60) return best.id;
+    const verified = ranked.find(item => {
+      if (titleMatches(item.title, title) && artistMatches(item.artist, artist)) return true;
+      return rawContainsTitleArtist(item.raw, title, artist) && item.score >= 90;
+    });
 
-  // 지니 HTML에서 제목/가수 텍스트를 못 뽑는 경우가 있어, 후보가 하나뿐이면 그 값을 사용한다.
-  if (ranked.length === 1) return ranked[0].id;
+    if (verified) return verified.id;
+  }
 
   return "0";
 }
 
 function extractBugsCandidates(html) {
   const candidates = [];
-  const patterns = [
-    /\/track\/(\d{3,})/g,
-    /trackId[=:]["']?(\d{3,})["']?/g,
-    /data-track-id=["']?(\d{3,})["']?/g
-  ];
+  const seen = new Set();
 
-  for (const regex of patterns) {
-    for (const match of html.matchAll(regex)) {
-      const index = match.index || 0;
-      const block = html.slice(Math.max(0, index - 3000), Math.min(html.length, index + 4500));
+  const rowRegex = /<tr[\s\S]*?<\/tr>/gi;
+  const rows = html.match(rowRegex) || [];
 
-      const titleMatch =
-        block.match(/class=["']title["'][\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i) ||
-        block.match(/title=["']([^"']+)["']/i);
+  for (const row of rows) {
+    const idMatch =
+      row.match(/\/track\/(\d{3,})/i) ||
+      row.match(/trackId[=:]["']?(\d{3,})["']?/i) ||
+      row.match(/data-track-id=["']?(\d{3,})["']?/i);
 
-      const artistMatch =
-        block.match(/class=["']artist["'][\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i) ||
-        block.match(/artist[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i);
+    if (!idMatch) continue;
 
-      candidates.push({
-        id: match[1],
-        title: stripTags(titleMatch?.[1] || ""),
-        artist: stripTags(artistMatch?.[1] || ""),
-        raw: block
-      });
-    }
+    const id = idMatch[1];
+    if (seen.has(id)) continue;
+
+    const titleMatch =
+      row.match(/class=["']title["'][\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i) ||
+      row.match(/title=["']([^"']+)["']/i);
+
+    const artistMatch =
+      row.match(/class=["']artist["'][\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i) ||
+      row.match(/class=["']artistTitle["'][\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i) ||
+      row.match(/artist[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i);
+
+    const candidate = {
+      id,
+      title: stripTags(titleMatch?.[1] || ""),
+      artist: stripTags(artistMatch?.[1] || ""),
+      raw: row
+    };
+
+    if (!candidate.title) continue;
+
+    seen.add(id);
+    candidates.push(candidate);
   }
 
-  return uniqueById(candidates);
+  return candidates;
 }
 
 async function findBugs(title, artist) {
@@ -207,7 +319,6 @@ async function findBugs(title, artist) {
 
   const best = ranked[0];
   if (best && best.score >= 60) return best.id;
-  if (ranked.length === 1) return ranked[0].id;
   return "0";
 }
 
@@ -225,7 +336,7 @@ export default async function handler(req, res) {
   }
 
   const redis = getRedis();
-  const cacheKey = `song:v3:melon:${melon}`;
+  const cacheKey = `song:v10:melon:${melon}`;
 
   try {
     if (redis) {
