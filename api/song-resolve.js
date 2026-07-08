@@ -36,6 +36,19 @@ function norm(value = "") {
     .replace(/[^\p{L}\p{N}]/gu, "");
 }
 
+function isInstrumentalTitle(title = "") {
+  const text = String(title).toLowerCase();
+
+  return (
+    /\binst\.?\b/.test(text) ||
+    /\binstrumental\b/.test(text) ||
+    /\boff\s*vocal\b/.test(text) ||
+    /\bmr\b/.test(text) ||
+    /\(inst\.?\)/i.test(title) ||
+    /\[inst\.?\]/i.test(title)
+  );
+}
+
 function scoreCandidate(item, title, artist) {
   const targetTitle = norm(title);
   const targetArtist = norm(artist);
@@ -185,8 +198,8 @@ async function findBugs(title, artist) {
     "https://music.bugs.co.kr/"
   );
 
-  const candidates = extractBugsCandidates(html);
-  if (!candidates.length) return "0";
+  const candidates = extractBugsCandidates(html)
+    .filter(item => !isInstrumentalTitle(item.title));
 
   const ranked = candidates
     .map(item => ({ ...item, score: scoreCandidate(item, title, artist) }))
@@ -212,7 +225,7 @@ export default async function handler(req, res) {
   }
 
   const redis = getRedis();
-  const cacheKey = `song:v2:melon:${melon}`;
+  const cacheKey = `song:v3:melon:${melon}`;
 
   try {
     if (redis) {
