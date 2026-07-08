@@ -262,35 +262,45 @@ async function findGenie(title, artist) {
 
 function extractBugsCandidates(html) {
   const candidates = [];
-  const patterns = [
-    /\/track\/(\d{3,})/g,
-    /trackId[=:]["']?(\d{3,})["']?/g,
-    /data-track-id=["']?(\d{3,})["']?/g
-  ];
+  const seen = new Set();
 
-  for (const regex of patterns) {
-    for (const match of html.matchAll(regex)) {
-      const index = match.index || 0;
-      const block = html.slice(Math.max(0, index - 3000), Math.min(html.length, index + 4500));
+  const rowRegex = /<tr[\s\S]*?<\/tr>/gi;
+  const rows = html.match(rowRegex) || [];
 
-      const titleMatch =
-        block.match(/class=["']title["'][\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i) ||
-        block.match(/title=["']([^"']+)["']/i);
+  for (const row of rows) {
+    const idMatch =
+      row.match(/\/track\/(\d{3,})/i) ||
+      row.match(/trackId[=:]["']?(\d{3,})["']?/i) ||
+      row.match(/data-track-id=["']?(\d{3,})["']?/i);
 
-      const artistMatch =
-        block.match(/class=["']artist["'][\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i) ||
-        block.match(/artist[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i);
+    if (!idMatch) continue;
 
-      candidates.push({
-        id: match[1],
-        title: stripTags(titleMatch?.[1] || ""),
-        artist: stripTags(artistMatch?.[1] || ""),
-        raw: block
-      });
-    }
+    const id = idMatch[1];
+    if (seen.has(id)) continue;
+
+    const titleMatch =
+      row.match(/class=["']title["'][\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i) ||
+      row.match(/title=["']([^"']+)["']/i);
+
+    const artistMatch =
+      row.match(/class=["']artist["'][\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i) ||
+      row.match(/class=["']artistTitle["'][\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i) ||
+      row.match(/artist[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i);
+
+    const candidate = {
+      id,
+      title: stripTags(titleMatch?.[1] || ""),
+      artist: stripTags(artistMatch?.[1] || ""),
+      raw: row
+    };
+
+    if (!candidate.title) continue;
+
+    seen.add(id);
+    candidates.push(candidate);
   }
 
-  return uniqueById(candidates);
+  return candidates;
 }
 
 async function findBugs(title, artist) {
@@ -309,7 +319,6 @@ async function findBugs(title, artist) {
 
   const best = ranked[0];
   if (best && best.score >= 60) return best.id;
-  if (ranked.length === 1) return ranked[0].id;
   return "0";
 }
 
@@ -327,7 +336,7 @@ export default async function handler(req, res) {
   }
 
   const redis = getRedis();
-  const cacheKey = `song:v9:melon:${melon}`;
+  const cacheKey = `song:v10:melon:${melon}`;
 
   try {
     if (redis) {
