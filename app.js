@@ -236,15 +236,26 @@ function collectDcGalleryCandidates(data) {
   const seenNodes = new WeakSet();
 
   const preferredKeys = new Set([
-    "gallery", "galleries", "gallery_list", "galleryList",
-    "items", "list", "result", "results", "data", "autocomplete"
+    "gallery",
+    "galleries",
+    "gallery_list",
+    "galleryList",
+    "items",
+    "list",
+    "result",
+    "results",
+    "data",
+    "autocomplete",
+    "recommend"
   ]);
 
   function walk(value, depth = 0) {
     if (!value || depth > 8) return;
 
     if (Array.isArray(value)) {
-      for (const item of value) walk(item, depth + 1);
+      for (const item of value) {
+        walk(item, depth + 1);
+      }
       return;
     }
 
@@ -253,12 +264,21 @@ function collectDcGalleryCandidates(data) {
     seenNodes.add(value);
 
     const normalized = normalizeDcGalleryItem(value);
-    if (normalized) result.push(normalized);
 
-    // 갤러리 결과로 보이는 컨테이너는 우선적으로 깊게 탐색한다.
+    if (normalized) {
+      result.push(normalized);
+    }
+
     for (const [key, child] of Object.entries(value)) {
       if (!child || typeof child !== "object") continue;
-      if (preferredKeys.has(key) || Array.isArray(child)) {
+
+      const isNumericKey = /^\d+$/.test(key);
+
+      if (
+        preferredKeys.has(key) ||
+        Array.isArray(child) ||
+        isNumericKey
+      ) {
         walk(child, depth + 1);
       }
     }
@@ -266,11 +286,13 @@ function collectDcGalleryCandidates(data) {
 
   walk(data);
 
-  // 디시가 내려준 순서는 유지하면서 같은 갤러리만 제거한다.
   const seen = new Set();
+
   return result.filter(item => {
     const key = `${item.type}:${item.id}`.toLowerCase();
+
     if (seen.has(key)) return false;
+
     seen.add(key);
     return true;
   });
