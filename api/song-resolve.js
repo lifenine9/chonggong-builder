@@ -304,21 +304,37 @@ function extractBugsCandidates(html) {
 }
 
 async function findBugs(title, artist) {
-  const q = `${title} ${artist || ""}`.trim();
-  const html = await fetchText(
-    "https://music.bugs.co.kr/search/track?q=" + encodeURIComponent(q),
-    "https://music.bugs.co.kr/"
-  );
+  for (const query of buildSearchQueries(title, artist)) {
+    const html = await fetchText(
+      "https://music.bugs.co.kr/search/track?q=" + encodeURIComponent(query),
+      "https://music.bugs.co.kr/"
+    ).catch(() => "");
 
-  const candidates = extractBugsCandidates(html)
-    .filter(item => !isInstrumentalTitle(item.title));
+    if (!html) continue;
 
-  const ranked = candidates
-    .map(item => ({ ...item, score: scoreCandidate(item, title, artist) }))
-    .sort((a, b) => b.score - a.score);
+    const candidates = extractBugsCandidates(html)
+      .filter(item => !isInstrumentalTitle(item.title));
 
-  const best = ranked[0];
-  if (best && best.score >= 60) return best.id;
+    const ranked = candidates
+      .map(item => ({
+        ...item,
+        score: scoreCandidate(item, title, artist)
+      }))
+      .sort((a, b) => b.score - a.score);
+
+    const verified = ranked.find(item => {
+      if (titleMatches(item.title, title) && artistMatches(item.artist, artist)) {
+        return true;
+      }
+
+      return rawContainsTitleArtist(item.raw, title, artist) && item.score >= 90;
+    });
+
+    if (verified) {
+      return verified.id;
+    }
+  }
+
   return "0";
 }
 
@@ -341,7 +357,14 @@ export default async function handler(req, res) {
   try {
     if (redis) {
       const cached = await redis.get(cacheKey);
-      if (cached) {
+
+      if (
+        cached &&
+        cached.genie &&
+        cached.genie !== "0" &&
+        cached.bugs &&
+        cached.bugs !== "0"
+      ) {
         res.setHeader("X-Cache", "HIT");
         return res.status(200).json(cached);
       }
@@ -360,8 +383,16 @@ export default async function handler(req, res) {
       bugs: bugsResult.status === "fulfilled" ? bugsResult.value : "0"
     };
 
-    if (redis) {
-      await redis.set(cacheKey, result, { ex: SONG_CACHE_TTL_SECONDS });
+    if (
+      redis &&
+      result.genie !== "0" &&
+      result.bugs !== "0"
+    ) {
+      await redis.set(cacheKey, result, {
+        ex: SONG_CACHE_TTL_SECONDS
+      });
+      res.setHeader("X-Cache", "MISS");
+    } else if (redis) {
       res.setHeader("X-Cache", "MISS");
     } else {
       res.setHeader("X-Cache", "BYPASS");
