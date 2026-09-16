@@ -170,45 +170,110 @@ function dcGalleryUrlByType(id, type) {
   return `https://gall.dcinside.com/${path}/?id=${encodeURIComponent(id)}`;
 }
 
+function getDcField(item, names) {
+  for (const name of names) {
+    const value = item?.[name];
+    if (value !== undefined && value !== null && String(value).trim() !== "") {
+      return String(value).trim();
+    }
+  }
+  return "";
+}
+
 function normalizeDcGalleryItem(gallery) {
-  if (!gallery) return null;
+  if (!gallery || typeof gallery !== "object") return null;
 
-  const id =
-    gallery.name ||
-    gallery.id ||
-    gallery.gall_id ||
-    gallery.gallery_id ||
-    gallery.gallid;
+  // 디시 자동완성 응답은 갤러리 종류/시점에 따라 필드명이 조금씩 다를 수 있다.
+  // URL에 들어가는 ID를 표시명보다 우선해서 사용한다.
+  const id = getDcField(gallery, [
+    "id", "gall_id", "gallery_id", "gallid", "galleryId",
+    "value", "code", "url_id", "urlId", "name"
+  ]);
 
-  const koName =
-    gallery.ko_name ||
-    gallery.name_ko ||
-    gallery.title ||
-    gallery.gall_name ||
-    gallery.nickname ||
-    id;
-
-  const gallType = String(gallery.gall_type || gallery.type || "").toUpperCase();
-
-  let type = "major";
-  if (gallType === "M" || gallType === "MINOR" || gallery.is_minor) type = "minor";
-  if (gallType === "MI" || gallType === "MINI" || gallery.is_mini) type = "mini";
+  const koName = getDcField(gallery, [
+    "ko_name", "name_ko", "title", "gall_name", "gallery_name",
+    "display_name", "displayName", "text", "keyword", "nickname", "name"
+  ]) || id;
 
   if (!id) return null;
+
+  const gallType = getDcField(gallery, [
+    "gall_type", "gallery_type", "type", "gallType", "galleryType"
+  ]).toUpperCase();
+
+  let type = "major";
+  if (
+    gallType === "M" || gallType === "MINOR" || gallType === "MGALLERY" ||
+    gallery.is_minor === true || gallery.isMinor === true
+  ) {
+    type = "minor";
+  }
+  if (
+    gallType === "MI" || gallType === "MINI" || gallType === "MINIGALLERY" ||
+    gallery.is_mini === true || gallery.isMini === true
+  ) {
+    type = "mini";
+  }
 
   const suffix =
     type === "minor" ? " 마이너 갤러리" :
     type === "mini" ? " 미니 갤러리" :
     " 갤러리";
 
-  const hasSuffix = /갤러리$/.test(String(koName));
+  const name = String(koName).trim();
+  const hasSuffix = /갤러리$/.test(name);
 
   return {
-    name: hasSuffix ? String(koName) : String(koName) + suffix,
+    name: hasSuffix ? name : name + suffix,
     id: String(id),
     type,
     url: dcGalleryUrlByType(String(id), type)
   };
+}
+
+function collectDcGalleryCandidates(data) {
+  const result = [];
+  const seenNodes = new WeakSet();
+
+  const preferredKeys = new Set([
+    "gallery", "galleries", "gallery_list", "galleryList",
+    "items", "list", "result", "results", "data", "autocomplete"
+  ]);
+
+  function walk(value, depth = 0) {
+    if (!value || depth > 8) return;
+
+    if (Array.isArray(value)) {
+      for (const item of value) walk(item, depth + 1);
+      return;
+    }
+
+    if (typeof value !== "object") return;
+    if (seenNodes.has(value)) return;
+    seenNodes.add(value);
+
+    const normalized = normalizeDcGalleryItem(value);
+    if (normalized) result.push(normalized);
+
+    // 갤러리 결과로 보이는 컨테이너는 우선적으로 깊게 탐색한다.
+    for (const [key, child] of Object.entries(value)) {
+      if (!child || typeof child !== "object") continue;
+      if (preferredKeys.has(key) || Array.isArray(child)) {
+        walk(child, depth + 1);
+      }
+    }
+  }
+
+  walk(data);
+
+  // 디시가 내려준 순서는 유지하면서 같은 갤러리만 제거한다.
+  const seen = new Set();
+  return result.filter(item => {
+    const key = `${item.type}:${item.id}`.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function dcJsonpAutocomplete(keyword, signal) {
@@ -271,32 +336,20 @@ async function dcSearchProvider(keyword, signal) {
   const parsed = normalizeGalleryUrl(keyword);
   if (parsed) return [parsed];
 
-  if (!q) return [];
-
   if (gallerySearchCache.has(q)) {
     return gallerySearchCache.get(q);
   }
 
   try {
-    const data = await dcJsonpAutocomplete(keyword, signal);
-    const rawGallery =
-      data?.gallery ||
-      data?.galleries ||
-      data?.result?.gallery ||
-      data?.data?.gallery ||
-      [];
-
-    const rawArray = Array.isArray(rawGallery) ? rawGallery : Object.values(rawGallery);
-
-    const remote = rawArray
-      .map(normalizeDcGalleryItem)
-      .filter(Boolean)
-      .slice(0, 30);
+    const data = await dcJsonpAutocomplete(raw, signal);
+    const remote = collectDcGalleryCandidates(data).slice(0, 30);
 
     if (remote.length) {
       gallerySearchCache.set(q, remote);
       return remote;
     }
+
+    console.warn("디시 자동완성에서 갤러리 결과를 찾지 못했습니다.", data);
   } catch (error) {
     if (error.name === "AbortError") throw error;
     console.warn(error);
