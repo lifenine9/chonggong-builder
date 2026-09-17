@@ -18,10 +18,16 @@ function getRedis() {
 }
 
 function parseJsonp(text) {
-  const start = text.indexOf("(");
-  const end = text.lastIndexOf(")");
-  if (start < 0 || end < start) throw new Error("JSONP 응답 파싱 실패");
-  return JSON.parse(text.slice(start + 1, end));
+  const trimmed = String(text || "").trim();
+  const firstParen = trimmed.indexOf("(");
+  const lastParen = trimmed.lastIndexOf(")");
+
+  if (firstParen < 0 || lastParen <= firstParen) {
+    throw new Error("JSONP 응답 파싱 실패");
+  }
+
+  const jsonText = trimmed.slice(firstParen + 1, lastParen);
+  return JSON.parse(jsonText);
 }
 
 function stripHtml(value = "") {
@@ -31,6 +37,9 @@ function stripHtml(value = "") {
     .replace(/&amp;/g, "&")
     .replace(/&#39;/g, "'")
     .replace(/&quot;/g, '"')
+    .replace(/&#x27;/gi, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -39,8 +48,24 @@ function normalizeSearchKey(q) {
   return String(q || "").trim().toLowerCase();
 }
 
+function normalizeSongResult(songs) {
+  return songs
+    .map(song => ({
+      title: stripHtml(song.SONGNAME || song.SONGNAMEDP || song.title || ""),
+      artist: stripHtml(song.ARTISTNAME || song.artist || ""),
+      melon: song.SONGID || song.melon
+        ? [String(song.SONGID || song.melon)]
+        : [],
+      genie: [],
+      bugs: [],
+      album: stripHtml(song.ALBUMNAME || song.album || "")
+    }))
+    .filter(song => song.title && song.melon.length)
+    .slice(0, 10);
+}
+
 async function searchMelonKeyword(q) {
-  const callback = "jsonp_callback_" + Date.now();
+  const callback = "jQuery" + Date.now();
   const url =
     "https://www.melon.com/search/keyword/index.json" +
     "?jscallback=" +
@@ -52,30 +77,110 @@ async function searchMelonKeyword(q) {
 
   const response = await fetch(url, {
     headers: {
-      "User-Agent": "Mozilla/5.0",
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
       Accept: "*/*",
-      "Accept-Language": "ko-KR,ko;q=0.9",
+      "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.7,en;q=0.6",
+      Referer: "https://www.melon.com/index.htm"
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Melon keyword API error: ${response.status}`);
+  }
+
+  const text = await response.text();
+  const data = parseJsonp(text);
+  const songs = Array.isArray(data?.SONGCONTENTS)
+    ? data.SONGCONTENTS
+    : [];
+
+  return normalizeSongResult(songs);
+}
+
+function extractAttribute(text, name) {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = String(text || "").match(
+    new RegExp(`${escaped}=["']([^"']+)["']`, "i")
+  );
+  return match ? match[1] : "";
+}
+
+function extractMelonHtmlSongs(html) {
+  const source = String(html || "");
+  const results = [];
+  const seen = new Set();
+
+  const idRegex = /melon\.link\.goSongDetail\(['"](\d+)['"]\)/gi;
+
+  for (const match of source.matchAll(idRegex)) {
+    const songId = match[1];
+    if (seen.has(songId)) continue;
+
+    const index = match.index || 0;
+    const block = source.slice(
+      Math.max(0, index - 5000),
+      Math.min(source.length, index + 5000)
+    );
+
+    const titleMatch =
+      block.match(/class=["'][^"']*rank01[^"']*["'][^>]*>[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i) ||
+      block.match(/class=["'][^"']*title[^"']*["'][^>]*>[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i);
+
+    const artistMatch =
+      block.match(/class=["'][^"']*rank02[^"']*["'][^>]*>[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i) ||
+      block.match(/class=["'][^"']*artist[^"']*["'][^>]*>[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i);
+
+    const title = stripHtml(titleMatch?.[1] || "");
+    const artist = stripHtml(artistMatch?.[1] || "");
+
+    if (!title) continue;
+
+    seen.add(songId);
+    results.push({
+      SONGID: songId,
+      SONGNAME: title,
+      ARTISTNAME: artist
+    });
+
+    if (results.length >= 10) break;
+  }
+
+  return normalizeSongResult(results);
+}
+
+async function searchMelonHtml(q) {
+  const url =
+    "https://www.melon.com/search/total/index.htm?q=" +
+    encodeURIComponent(q);
+
+  const response = await fetch(url, {
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.7,en;q=0.6",
       Referer: "https://www.melon.com/"
     }
   });
 
-  if (!response.ok) throw new Error(`Melon keyword API error: ${response.status}`);
+  if (!response.ok) {
+    throw new Error(`Melon HTML search error: ${response.status}`);
+  }
 
-  const text = await response.text();
-  const data = parseJsonp(text);
-  const songs = Array.isArray(data.SONGCONTENTS) ? data.SONGCONTENTS : [];
+  const html = await response.text();
+  return extractMelonHtmlSongs(html);
+}
 
-  return songs
-    .map(song => ({
-      title: stripHtml(song.SONGNAME || song.SONGNAMEDP || ""),
-      artist: stripHtml(song.ARTISTNAME || ""),
-      melon: song.SONGID ? [String(song.SONGID)] : [],
-      genie: [],
-      bugs: [],
-      album: stripHtml(song.ALBUMNAME || "")
-    }))
-    .filter(song => song.title && song.melon.length)
-    .slice(0, 10);
+async function searchMelon(q) {
+  try {
+    const results = await searchMelonKeyword(q);
+    if (results.length) return results;
+  } catch (error) {
+    console.warn("Melon keyword search failed:", error);
+  }
+
+  return searchMelonHtml(q);
 }
 
 export default async function handler(req, res) {
@@ -104,7 +209,7 @@ export default async function handler(req, res) {
       }
     }
 
-    const results = await searchMelonKeyword(q);
+    const results = await searchMelon(q);
 
     if (redis) {
       await redis.set(cacheKey, results, {
@@ -117,7 +222,7 @@ export default async function handler(req, res) {
 
     return res.status(200).json(results);
   } catch (error) {
-    console.error(error);
+    console.error("song-search error:", error);
     return res.status(500).send("멜론 곡 검색에 실패했습니다.");
   }
 }
