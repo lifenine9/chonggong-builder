@@ -3,6 +3,7 @@ import { Redis } from "@upstash/redis";
 let redisClient = null;
 
 const SEARCH_CACHE_TTL_SECONDS = 60 * 60 * 24;
+const SEARCH_CACHE_VERSION = "v2";
 
 function getRedis() {
   const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
@@ -32,6 +33,8 @@ function parseJsonp(text) {
 
 function stripHtml(value = "") {
   return String(value)
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
     .replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;/g, " ")
     .replace(/&amp;/g, "&")
@@ -40,6 +43,7 @@ function stripHtml(value = "") {
     .replace(/&#x27;/gi, "'")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
+    .replace(/상세\s*정보\s*페이지\s*이동/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -111,25 +115,36 @@ function extractMelonHtmlSongs(html) {
   const results = [];
   const seen = new Set();
 
-  const idRegex = /melon\.link\.goSongDetail\(['"](\d+)['"]\)/gi;
+  // 한 곡 단위인 <tr> 안에서만 제목/아티스트를 찾는다.
+  // 기존처럼 SID 주변 5,000자를 사용하면 인접 곡의 정보가 섞일 수 있다.
+  const rows = source.match(/<tr[\s\S]*?<\/tr>/gi) || [];
 
-  for (const match of source.matchAll(idRegex)) {
-    const songId = match[1];
-    if (seen.has(songId)) continue;
-
-    const index = match.index || 0;
-    const block = source.slice(
-      Math.max(0, index - 5000),
-      Math.min(source.length, index + 5000)
+  for (const row of rows) {
+    const idMatch = row.match(
+      /melon\.link\.goSongDetail\(['"](\d+)['"]\)/i
     );
 
+    if (!idMatch) continue;
+
+    const songId = idMatch[1];
+
+    if (seen.has(songId)) continue;
+
     const titleMatch =
-      block.match(/class=["'][^"']*rank01[^"']*["'][^>]*>[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i) ||
-      block.match(/class=["'][^"']*title[^"']*["'][^>]*>[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i);
+      row.match(
+        /class=["'][^"']*rank01[^"']*["'][^>]*>[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i
+      ) ||
+      row.match(
+        /class=["'][^"']*title[^"']*["'][^>]*>[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i
+      );
 
     const artistMatch =
-      block.match(/class=["'][^"']*rank02[^"']*["'][^>]*>[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i) ||
-      block.match(/class=["'][^"']*artist[^"']*["'][^>]*>[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i);
+      row.match(
+        /class=["'][^"']*rank02[^"']*["'][^>]*>[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i
+      ) ||
+      row.match(
+        /class=["'][^"']*artist[^"']*["'][^>]*>[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i
+      );
 
     const title = stripHtml(titleMatch?.[1] || "");
     const artist = stripHtml(artistMatch?.[1] || "");
@@ -137,6 +152,7 @@ function extractMelonHtmlSongs(html) {
     if (!title) continue;
 
     seen.add(songId);
+
     results.push({
       SONGID: songId,
       SONGNAME: title,
@@ -197,7 +213,7 @@ export default async function handler(req, res) {
   }
 
   const redis = getRedis();
-  const cacheKey = `search:melon:${normalizeSearchKey(q)}`;
+  const cacheKey = `search:melon:${SEARCH_CACHE_VERSION}:${normalizeSearchKey(q)}`;
 
   try {
     if (redis) {
